@@ -26,29 +26,32 @@ def get_diagnostic_info():
     }
     return info
 
-# Function to verify server address format
+# Function to safely handle server name formatting
 def format_server_address(server):
     """
-    Ensure the server address is in the correct format for connection.
-    For Azure SQL, add .database.windows.net if not already present.
+    Safely handle server name formatting without making assumptions.
+    Only formats the server name if explicitly requested in settings.
     """
-    # Check if it's already a full address with domain
-    if "." in server and any(domain in server.lower() for domain in [
-        ".database.windows.net", 
-        ".sql.azuresynapse.net", 
-        ".database.secure.windows.net"
-    ]):
-        return server
+    # IMPORTANT: By default, return the server name exactly as provided
+    # This avoids incorrect assumptions about server type
     
-    # If it looks like an Azure SQL server name without domain, add it
-    if not server.endswith(".database.windows.net"):
-        # Try to determine if this is an Azure SQL server
-        if not any(x in server.lower() for x in [
-            "localhost", "127.0.0.1", "\\", ","
-        ]):
-            return f"{server}.database.windows.net"
+    # If we detect specific Azure naming patterns that are incomplete, 
+    # we might suggest formatting but we won't automatically apply it
+    is_likely_azure = (
+        # No dots, no special chars, not localhost
+        "." not in server and
+        not any(x in server.lower() for x in ["localhost", "127.0.0.1", "\\", ","]) and
+        # Follows Azure naming pattern (alphanumeric, hyphens)
+        all(c.isalnum() or c == '-' for c in server)
+    )
     
-    # Return as-is if it appears to be an on-premises server
+    if is_likely_azure:
+        st.sidebar.info(
+            f"Server name '{server}' might be an Azure SQL server name. " +
+            f"If connecting fails, try using '{server}.database.windows.net'"
+        )
+        
+    # Always return the original name - let the user explicitly specify the full name
     return server
 
 # Initialize connection pool
@@ -68,24 +71,24 @@ def init_connection_pool():
     # Get diagnostic information for troubleshooting
     diagnostics = get_diagnostic_info()
     try:
-        # Get server name and ensure proper format
+        # Get server name - use EXACTLY as provided in secrets
         server = st.secrets['sql']['server']
-        formatted_server = format_server_address(server)
         
         # Show connection attempt message
-        st.sidebar.info(f"Attempting to connect to: {formatted_server}")
+        st.sidebar.info(f"Attempting to connect to server: {server}")
         
-        # Simplified connection string based on Streamlit discussion recommendations
-        # Following format from: https://discuss.streamlit.io/t/error-to-connect-sql-server/24892
+        # Check if server might need formatting (but don't apply automatically)
+        format_server_address(server)
+        
+        # Simplified connection string using exact server name from secrets
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={formatted_server};"
+            f"SERVER={server};"  # Use server name exactly as provided
             f"DATABASE={st.secrets['sql']['database']};"
             f"UID={st.secrets['sql']['username']};"
             f"PWD={st.secrets['sql']['password']};"
-            f"Timeout=60;"  # Simplified timeout parameter
-            f"Encrypt=yes;"  # Enable encryption
-            f"TrustServerCertificate=yes;"  # Trust the server certificate without validation
+            f"Connection Timeout=30;"  # Standard timeout
+            f"TrustServerCertificate=yes;"  # Trust certificate
         )
         
         # Log connection attempt details (without credentials)
@@ -109,7 +112,7 @@ The connection to the database server timed out. This could be due to:
 - Network connectivity issues
 - Server might be down or unavailable
             
-**Current server address:** {formatted_server}
+**Current server address:** {server}
 **Try checking:**
 - Verify your server name is correct
 - Ensure firewall rules allow connections from your current IP
@@ -119,11 +122,14 @@ The connection to the database server timed out. This could be due to:
 
 **Alternative connection options to try:**
 ```python
-# Try with default encryption settings
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={formatted_server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
-
 # Try with encryption disabled
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={formatted_server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;Encrypt=no;"
+conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;Encrypt=no;"
+
+# If this is an Azure SQL server, try with the full domain name:
+conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server}.database.windows.net;DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
+
+# Try a basic connection string:
+conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
 ```
             """)
         elif "28000" in error_msg or "login failed" in error_msg.lower():
@@ -235,11 +241,10 @@ with diagnostics_expander:
     # Add server connectivity test button
     if st.button("Test Server Connectivity"):
         server = st.secrets['sql']['server']
-        formatted_server = format_server_address(server)
         
         try:
             # Remove domain for ping test if it's a fully qualified domain name
-            ping_server = formatted_server.split('.')[0] if '.' in formatted_server else formatted_server
+            ping_server = server.split('.')[0] if '.' in server else server
             st.info(f"Testing connectivity to {ping_server}...")
             
             # Simple hostname lookup test
