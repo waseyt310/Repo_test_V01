@@ -67,7 +67,6 @@ def init_connection_pool():
     """
     # Get diagnostic information for troubleshooting
     diagnostics = get_diagnostic_info()
-    
     try:
         # Get server name and ensure proper format
         server = st.secrets['sql']['server']
@@ -76,22 +75,26 @@ def init_connection_pool():
         # Show connection attempt message
         st.sidebar.info(f"Attempting to connect to: {formatted_server}")
         
-        # Construct connection string from secrets with enhanced parameters
+        # Simplified connection string based on Streamlit discussion recommendations
+        # Following format from: https://discuss.streamlit.io/t/error-to-connect-sql-server/24892
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={formatted_server};"
             f"DATABASE={st.secrets['sql']['database']};"
             f"UID={st.secrets['sql']['username']};"
             f"PWD={st.secrets['sql']['password']};"
-            f"Connection Timeout=60;"  # Increased timeout 
-            f"Encrypt=yes;TrustServerCertificate=yes;"  # Added for secure connection
-            f"ApplicationIntent=ReadOnly;"  # Optimize for read operations
+            f"Timeout=60;"  # Simplified timeout parameter
+            f"Encrypt=yes;"  # Enable encryption
+            f"TrustServerCertificate=yes;"  # Trust the server certificate without validation
         )
         
-        # Create connection with connection pooling settings
-        return pyodbc.connect(conn_str, 
-                            autocommit=True,
-                            timeout=60)  # Increased timeout for connection
+        # Log connection attempt details (without credentials)
+        st.sidebar.info("Connecting with driver: ODBC Driver 17 for SQL Server")
+        
+        # Create connection with simplified parameters
+        conn = pyodbc.connect(conn_str, autocommit=True)
+        st.sidebar.success(f"Driver version: {conn.getinfo(pyodbc.SQL_DRIVER_VER)}")
+        return conn
     
     except pyodbc.OperationalError as e:
         error_msg = str(e)
@@ -112,6 +115,16 @@ The connection to the database server timed out. This could be due to:
 - Ensure firewall rules allow connections from your current IP
 - Check if you can ping the server
 - Verify VPN connection if required
+- Try alternative connection methods (see below)
+
+**Alternative connection options to try:**
+```python
+# Try with default encryption settings
+conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={formatted_server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
+
+# Try with encryption disabled
+conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={formatted_server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;Encrypt=no;"
+```
             """)
         elif "28000" in error_msg or "login failed" in error_msg.lower():
             st.error(f"""### Authentication Error
