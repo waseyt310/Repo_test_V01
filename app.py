@@ -1,10 +1,17 @@
 import streamlit as st
 import pyodbc
-import time
 import pandas as pd
+import time
 import socket
 import platform
 from contextlib import contextmanager
+
+# Set page configuration
+st.set_page_config(
+    page_title="SQL Server Data Explorer",
+    page_icon="📊",
+    layout="wide"
+)
 
 # Title and description
 st.title("SQL Server Data Explorer")
@@ -13,47 +20,6 @@ This application connects to a SQL Server database and allows you to run queries
 Connection information is securely stored in .streamlit/secrets.toml.
 """)
 
-# Diagnostic information for troubleshooting
-def get_diagnostic_info():
-    """
-    Collect diagnostic information about the environment to help troubleshoot connection issues.
-    """
-    info = {
-        "hostname": socket.gethostname(),
-        "platform": platform.platform(),
-        "pyodbc_version": pyodbc.version,
-        "python_version": platform.python_version(),
-    }
-    return info
-
-# Function to safely handle server name formatting
-def format_server_address(server):
-    """
-    Safely handle server name formatting without making assumptions.
-    Only formats the server name if explicitly requested in settings.
-    """
-    # IMPORTANT: By default, return the server name exactly as provided
-    # This avoids incorrect assumptions about server type
-    
-    # If we detect specific Azure naming patterns that are incomplete, 
-    # we might suggest formatting but we won't automatically apply it
-    is_likely_azure = (
-        # No dots, no special chars, not localhost
-        "." not in server and
-        not any(x in server.lower() for x in ["localhost", "127.0.0.1", "\\", ","]) and
-        # Follows Azure naming pattern (alphanumeric, hyphens)
-        all(c.isalnum() or c == '-' for c in server)
-    )
-    
-    if is_likely_azure:
-        st.sidebar.info(
-            f"Server name '{server}' might be an Azure SQL server name. " +
-            f"If connecting fails, try using '{server}.database.windows.net'"
-        )
-        
-    # Always return the original name - let the user explicitly specify the full name
-    return server
-
 # Initialize connection pool
 # Uses st.cache_resource to only run once and persist connection pool
 @st.cache_resource
@@ -61,48 +27,36 @@ def init_connection_pool():
     """
     Initialize and return a connection to SQL Server using connection pooling.
     Credentials are stored securely in .streamlit/secrets.toml.
-    
-    Includes:
-    - Server address format validation
-    - Robust error handling
-    - Connection timeout parameters
-    - Diagnostic information
     """
-    # Get diagnostic information for troubleshooting
-    diagnostics = get_diagnostic_info()
     try:
-        # Get server name - use EXACTLY as provided in secrets
-        server = st.secrets['sql']['server']
+        # Get connection parameters from secrets
+        server = st.secrets["sql"]["server"]
+        database = st.secrets["sql"]["database"]
+        username = st.secrets["sql"]["username"]
+        password = st.secrets["sql"]["password"]
         
         # Show connection attempt message
         st.sidebar.info(f"Attempting to connect to server: {server}")
         
-        # Check if server might need formatting (but don't apply automatically)
-        format_server_address(server)
-        
-        # Simplified connection string using exact server name from secrets
+        # Simplified connection string
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={server};"  # Use server name exactly as provided
-            f"DATABASE={st.secrets['sql']['database']};"
-            f"UID={st.secrets['sql']['username']};"
-            f"PWD={st.secrets['sql']['password']};"
-            f"Connection Timeout=30;"  # Standard timeout
-            f"TrustServerCertificate=yes;"  # Trust certificate
+            f"SERVER={server};"
+            f"DATABASE={database};"
+            f"UID={username};"
+            f"PWD={password};"
+            f"Connection Timeout=30;"
+            f"TrustServerCertificate=yes;"
         )
-        
-        # Log connection attempt details (without credentials)
-        st.sidebar.info("Connecting with driver: ODBC Driver 17 for SQL Server")
         
         # Create connection with simplified parameters
         conn = pyodbc.connect(conn_str, autocommit=True)
-        st.sidebar.success(f"Driver version: {conn.getinfo(pyodbc.SQL_DRIVER_VER)}")
+        st.sidebar.success(f"Connected successfully. Driver version: {conn.getinfo(pyodbc.SQL_DRIVER_VER)}")
         return conn
     
     except pyodbc.OperationalError as e:
         error_msg = str(e)
         
-        # Provide specific guidance based on error type
         # Provide specific guidance based on error type
         if "HYT00" in error_msg or "timeout" in error_msg.lower():
             st.error(f"""### Connection Timeout Error
@@ -112,45 +66,11 @@ The connection to the database server timed out. This could be due to:
 - Firewall restrictions blocking the connection
 - Network connectivity issues
 - Server might be down or unavailable
-- **The database might not be publicly accessible** (common with Streamlit Cloud deployment)
             
-**Current server address:** {server}
-
-### 🚨 Streamlit Cloud Deployment Note
-If you're deploying to Streamlit Cloud, your database **must be publicly accessible**:
-- **Private/internal databases** (like local or VPN-only databases) will not be accessible
-- You must allowlist Streamlit Cloud's IP addresses in your database firewall
-- Streamlit Cloud's IP addresses: 
-  - 35.192.32.0/20
-  - 34.67.232.0/22
-  - 34.67.64.0/22
-  - 34.82.0.0/20
-  - 34.98.64.0/20
-  - 34.106.136.0/21
-
 **Try checking:**
 - Verify your server name is correct
-- Ensure firewall rules allow connections from Streamlit Cloud IP addresses
-- Confirm your database is publicly accessible or exposed via a secure proxy
-- Check if you can ping the server from a public network
-- Consider using a cloud-hosted database if you're currently using a private one
-
-**Alternative connection options to try:**
-```python
-# Try with encryption disabled
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;Encrypt=no;"
-
-# If this is an Azure SQL server, try with the full domain name:
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server}.database.windows.net;DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
-
-# Try a basic connection string:
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
-```
-
-**Alternative Solutions for Private Databases:**
-- Host your database on a cloud provider (Azure SQL, AWS RDS, etc.)
-- Set up a secure API or function that serves as a proxy for your database
-- Use a VPN or SSH tunnel with a public endpoint (advanced)
+- Ensure firewall rules allow connections
+""")
         elif "28000" in error_msg or "login failed" in error_msg.lower():
             st.error(f"""### Authentication Error
             
@@ -162,14 +82,13 @@ Login to the database server failed. This could be due to:
 **Try checking:**
 - Verify your username and password
 - Ensure the account has proper permissions
-            """)
+""")
         else:
             st.error(f"Connection Error: {error_msg}")
         
-        # Display diagnostic information to help troubleshoot
-        with st.expander("View diagnostic information"):
-            st.json(diagnostics)
-            
+        return None
+    except Exception as e:
+        st.error(f"Unexpected error: {str(e)}")
         return None
 
 # Context manager for database connections
@@ -202,9 +121,8 @@ def run_query(query):
     The function includes retry logic and proper error handling.
     Results are cached for 10 minutes.
     """
-    max_retries = 5  # Increased from 3 to 5
+    max_retries = 3
     retry_count = 0
-    backoff_factor = 1.5  # Exponential backoff factor
     
     while retry_count < max_retries:
         try:
@@ -223,9 +141,9 @@ def run_query(query):
             # Determine if it's a timeout or a different operational error
             if "HYT00" in error_msg or "timeout" in error_msg.lower():
                 if retry_count < max_retries:
-                    wait_time = backoff_factor ** retry_count  # Exponential backoff
-                    st.warning(f"Query timeout, retrying in {wait_time:.1f} seconds ({retry_count}/{max_retries})...")
-                    time.sleep(wait_time)  # Wait with exponential backoff
+                    wait_time = 2 ** retry_count  # Exponential backoff
+                    st.warning(f"Query timeout, retrying in {wait_time} seconds ({retry_count}/{max_retries})...")
+                    time.sleep(wait_time)
                 else:
                     st.error(f"Query timed out after {max_retries} attempts. Try simplifying your query.")
                     return pd.DataFrame()
@@ -233,7 +151,7 @@ def run_query(query):
                 # For other operational errors
                 if retry_count < max_retries:
                     st.warning(f"Connection issue, retrying ({retry_count}/{max_retries})...")
-                    time.sleep(1)  # Short delay
+                    time.sleep(1)
                 else:
                     st.error(f"Failed to execute query after {max_retries} attempts: {error_msg}")
                     return pd.DataFrame()
@@ -247,45 +165,32 @@ def run_query(query):
             st.error(f"Query Error: {str(e)}")
             return pd.DataFrame()
 
-# Connection status indicator
-connection_status = st.sidebar.empty()
-diagnostics_expander = st.sidebar.expander("Connection Diagnostics")
+# Display diagnostic information
+def get_diagnostic_info():
+    """Collect system information for diagnostics"""
+    info = {
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "python_version": platform.python_version()
+    }
+    try:
+        info["pyodbc_version"] = pyodbc.version
+    except:
+        info["pyodbc_version"] = "Unknown"
+    return info
 
-with diagnostics_expander:
+# Sidebar with connection info
+st.sidebar.header("Connection Information")
+connection_status = st.sidebar.empty()
+
+# Display diagnostic information in sidebar expander
+with st.sidebar.expander("Connection Diagnostics"):
     st.write("### System Information")
     diagnostics = get_diagnostic_info()
     for key, value in diagnostics.items():
         st.write(f"**{key}:** {value}")
-    
-    # Add server connectivity test button
-    if st.button("Test Server Connectivity"):
-        server = st.secrets['sql']['server']
-        
-        try:
-            # Remove domain for ping test if it's a fully qualified domain name
-            ping_server = server.split('.')[0] if '.' in server else server
-            st.info(f"Testing connectivity to {ping_server}...")
-            
-            # Simple hostname lookup test
-            try:
-                ip_address = socket.gethostbyname(ping_server)
-                st.success(f"✅ DNS Resolution successful: {ping_server} → {ip_address}")
-            except socket.gaierror:
-                st.error(f"❌ Unable to resolve hostname: {ping_server}")
-                
-            # Try a basic socket connection on port 1433 (SQL Server default)
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(5)
-                s.connect((ping_server, 1433))
-                s.close()
-                st.success(f"✅ TCP connection successful to {ping_server}:1433")
-            except Exception as e:
-                st.error(f"❌ TCP connection failed to {ping_server}:1433: {str(e)}")
-                
-        except Exception as e:
-            st.error(f"❌ Connectivity test failed: {str(e)}")
 
+# Test connection
 try:
     with get_connection() as conn:
         if conn:
@@ -295,10 +200,12 @@ try:
 except Exception as e:
     connection_status.error(f"❌ Connection Error: {str(e)}")
 
-# Query input
+# Main content area
 st.subheader("Run SQL Query")
+
+# Query input with default example
 default_query = "SELECT TOP 10 * FROM INFORMATION_SCHEMA.TABLES;"
-query = st.text_area("Enter SQL Query", value=default_query, height=100)
+query = st.text_area("Enter SQL Query", value=default_query, height=150)
 
 # Execute button
 if st.button("Run Query"):
@@ -332,4 +239,3 @@ if st.button("Run Query"):
 # Footer
 st.markdown("---")
 st.markdown("Created with Streamlit and SQL Server")
-
