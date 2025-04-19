@@ -103,6 +103,7 @@ def init_connection_pool():
         error_msg = str(e)
         
         # Provide specific guidance based on error type
+        # Provide specific guidance based on error type
         if "HYT00" in error_msg or "timeout" in error_msg.lower():
             st.error(f"""### Connection Timeout Error
             
@@ -111,14 +112,28 @@ The connection to the database server timed out. This could be due to:
 - Firewall restrictions blocking the connection
 - Network connectivity issues
 - Server might be down or unavailable
+- **The database might not be publicly accessible** (common with Streamlit Cloud deployment)
             
 **Current server address:** {server}
+
+### 🚨 Streamlit Cloud Deployment Note
+If you're deploying to Streamlit Cloud, your database **must be publicly accessible**:
+- **Private/internal databases** (like local or VPN-only databases) will not be accessible
+- You must allowlist Streamlit Cloud's IP addresses in your database firewall
+- Streamlit Cloud's IP addresses: 
+  - 35.192.32.0/20
+  - 34.67.232.0/22
+  - 34.67.64.0/22
+  - 34.82.0.0/20
+  - 34.98.64.0/20
+  - 34.106.136.0/21
+
 **Try checking:**
 - Verify your server name is correct
-- Ensure firewall rules allow connections from your current IP
-- Check if you can ping the server
-- Verify VPN connection if required
-- Try alternative connection methods (see below)
+- Ensure firewall rules allow connections from Streamlit Cloud IP addresses
+- Confirm your database is publicly accessible or exposed via a secure proxy
+- Check if you can ping the server from a public network
+- Consider using a cloud-hosted database if you're currently using a private one
 
 **Alternative connection options to try:**
 ```python
@@ -131,7 +146,11 @@ conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server}.database.w
 # Try a basic connection string:
 conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={st.secrets['sql']['database']};UID={st.secrets['sql']['username']};PWD=your_password;"
 ```
-            """)
+
+**Alternative Solutions for Private Databases:**
+- Host your database on a cloud provider (Azure SQL, AWS RDS, etc.)
+- Set up a secure API or function that serves as a proxy for your database
+- Use a VPN or SSH tunnel with a public endpoint (advanced)
         elif "28000" in error_msg or "login failed" in error_msg.lower():
             st.error(f"""### Authentication Error
             
